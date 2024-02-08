@@ -79,6 +79,67 @@ struct ReaderResponse {
     results: Vec<ReaderResult>,
 }
 
+async fn save(pool: &PgPool, result: ReaderResult) {
+    debug!("Processing: {result:?}");
+    sqlx::query!(
+        r#"
+        INSERT INTO reading (
+            id,
+            author,
+            category,
+            content,
+            created_at,
+            image_url,
+            location,
+            notes,
+            parent_id,
+            published_date,
+            reading_progress,
+            readwise_url,
+            site_name,
+            source,
+            source_url,
+            summary,
+            tags,
+            title,
+            updated_at,
+            word_count
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+            $12, $13, $14, $15, $16, $17, $18, $19, $20
+        )
+        ON CONFLICT DO NOTHING
+        "#,
+        result.id,
+        result.author,
+        result.category as _,
+        result.content,
+        result.created_at,
+        result.image_url,
+        result.location as _,
+        result.notes,
+        result.parent_id,
+        result.published_date,
+        result.reading_progress,
+        result.readwise_url,
+        result.site_name,
+        result.source,
+        result.source_url,
+        result.summary,
+        result.tags,
+        result.title,
+        result.updated_at,
+        result.word_count,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!("Failed to execute query: {:?}", e);
+        e
+    })
+    .unwrap();
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -103,61 +164,7 @@ async fn main() -> Result<()> {
     // println!("{response:?}");
 
     for result in response.results {
-        debug!("Processing: {result:?}");
-        sqlx::query!(
-            r#"
-        INSERT INTO reading (
-            id,
-            author,
-            category,
-            content,
-            created_at,
-            image_url,
-            location,
-            notes,
-            parent_id,
-            published_date,
-            reading_progress,
-            readwise_url,
-            site_name,
-            source,
-            source_url,
-            summary,
-            tags,
-            title,
-            updated_at,
-            word_count
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-        "#,
-            result.id,
-            result.author,
-            result.category as _,
-            result.content,
-            result.created_at,
-            result.image_url,
-            result.location as _,
-            result.notes,
-            result.parent_id,
-            result.published_date,
-            result.reading_progress,
-            result.readwise_url,
-            result.site_name,
-            result.source,
-            result.source_url,
-            result.summary,
-            result.tags,
-            result.title,
-            result.updated_at,
-            result.word_count,
-        )
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to execute query: {:?}", e);
-            e
-        })
-        .unwrap();
+        save(&pool, result).await;
     }
 
     Ok(())
