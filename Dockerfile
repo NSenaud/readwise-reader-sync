@@ -18,7 +18,7 @@ ENV SQLX_OFFLINE true
 RUN cargo build --release --bin reader-sync
 
 
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
 ENV APP_ENVIRONMENT production
