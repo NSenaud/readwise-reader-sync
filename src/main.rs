@@ -1,10 +1,12 @@
-use anyhow::Result;
-use chrono::serde::ts_milliseconds_option;
+use std::time::Duration;
+use std::thread;
+
+use anyhow::{bail, Result};
 use chrono::{DateTime, Local, Utc};
-use log::{debug, error, info};
-use serde::{Deserialize, Serialize};
+use log::{debug, error, info, warn};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use sqlx::postgres::PgPool;
+use sqlx::postgres::{PgPool, PgQueryResult};
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type)]
 #[sqlx(type_name = "category", rename_all = "lowercase")]
@@ -46,42 +48,53 @@ enum Location {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ReaderResult {
-    author: String,
+    author: Option<String>,
     category: Category,
     content: Option<String>,
     created_at: DateTime<Local>,
     id: String,
     image_url: Option<String>,
-    location: Location,
-    notes: String,
+    location: Option<Location>,
+    notes: Option<String>,
     parent_id: Option<String>,
-    #[serde(with = "ts_milliseconds_option")]
+    #[serde(deserialize_with = "deserialize_published_date")]
     published_date: Option<DateTime<Utc>>,
     reading_progress: f32,
-    site_name: String,
+    site_name: Option<String>,
     source: Option<String>,
-    source_url: String,
+    source_url: Option<String>,
     summary: Option<String>,
     // TODO: import strutured tags
-    tags: Value,
-    title: String,
+    tags: Option<Value>,
+    title: Option<String>,
     updated_at: Option<DateTime<Local>>,
     #[serde(rename = "url")]
-    readwise_url: String,
-    word_count: i32,
+    readwise_url: Option<String>,
+    word_count: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ReaderResponse {
     count: usize,
     #[serde(rename = "nextPageCursor")]
-    next_page_cursor: String,
+    next_page_cursor: Option<String>,
     results: Vec<ReaderResult>,
 }
 
-async fn save(pool: &PgPool, result: ReaderResult) {
+// FIXME: deserialize timestamp or ISO3339 dates
+fn deserialize_published_date<'a, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Deserialize<'a> + Default,
+    D: Deserializer<'a>,
+{
+    let v: Value = Deserialize::deserialize(deserializer)?;
+
+    Ok(T::deserialize(v).unwrap_or_default())
+}
+
+async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     debug!("Processing: {result:?}");
-    sqlx::query!(
+    match sqlx::query!(
         r#"
         INSERT INTO reading (
             id,
@@ -136,8 +149,35 @@ async fn save(pool: &PgPool, result: ReaderResult) {
     .map_err(|e| {
         error!("Failed to execute query: {:?}", e);
         e
-    })
-    .unwrap();
+    }) {
+        Ok(r) => Ok(r),
+        Err(e) => bail!("Failed to save entry in database: {e}"),
+    }
+}
+
+fn get_reading(url: &String, access_token: &String) -> Option<ureq::Response> {
+    loop {
+        let (response, wait_for) = match ureq::get(url)
+            .set("Authorization", &format!("Token {access_token}"))
+            .set("Content-Type", "application/json")
+            .call()
+        {
+            Ok(r) => (Some(r), 0),
+            Err(ureq::Error::Status(code, response)) => {
+                warn!(
+                    "Received code {code}, wait for {} seconds",
+                    response.header("Retry-After").unwrap_or("undefined")
+                );
+                (None, str::parse(response.header("Retry-After").unwrap_or("0")).expect("Failed to parse Retry-After header"))
+            },
+            Err(e) => panic!("{}", e),
+        };
+
+        match response {
+            None => thread::sleep(Duration::from_millis((wait_for * 1000) as u64)),
+            _ => return response,
+        }
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -152,19 +192,44 @@ async fn main() -> Result<()> {
 
     let access_token = &dotenvy::var("READWISE_ACCESS_TOKEN")?;
 
-    info!("Requisting Readwise API...");
-    let response: ReaderResponse = ureq::get("https://readwise.io/api/v3/list/?location=later")
-        .set("Authorization", &format!("Token {access_token}"))
-        .set("Content-Type", "application/json")
-        .call()?
-        .into_json()?;
+    let mut next_page_cursor = None;
 
-    info!("{} items found", response.count);
-    info!("Saving {} items to database...", response.results.len());
-    // println!("{response:?}");
+    loop {
+        info!("Requisting Readwise API...");
+        let url = match next_page_cursor {
+            None => "https://readwise.io/api/v3/list/".to_string(),
+            Some(v) => format!("https://readwise.io/api/v3/list/?pageCursor={}", v),
+        };
 
-    for result in response.results {
-        save(&pool, result).await;
+        let response: String = get_reading(&url, access_token).expect("Unexpected answer").into_string()?;
+
+        // Some Deserializer.
+        let jd = &mut serde_json::Deserializer::from_str(&response);
+
+        let response: ReaderResponse = match serde_path_to_error::deserialize(jd) {
+            Ok(v) => v,
+            Err(err) => panic!("{} error for path {}", err, err.path()),
+        };
+
+        next_page_cursor = response.next_page_cursor;
+
+        info!("{} items found", response.count);
+        info!("Saving {} items to database...", response.results.len());
+
+        for result in response.results {
+            match save(&pool, &result).await {
+                Ok(_) => debug!("{} sync", result.title.unwrap_or("Untitled".to_string())),
+                Err(e) => error!(
+                    "Failed to sync {}: {}",
+                    result.title.unwrap_or("Untitled".to_string()),
+                    e,
+                ),
+            }
+        }
+
+        if next_page_cursor.is_none() {
+            break;
+        }
     }
 
     Ok(())
