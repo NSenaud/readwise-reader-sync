@@ -70,7 +70,8 @@ struct ReaderResult {
     updated_at: Option<DateTime<Local>>,
     #[serde(rename = "url")]
     readwise_url: Option<String>,
-    word_count: Option<i32>,
+    #[serde(deserialize_with = "deserialize_word_count")]
+    word_count: i32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -90,6 +91,17 @@ where
     let v: Value = Deserialize::deserialize(deserializer)?;
 
     Ok(T::deserialize(v).unwrap_or_default())
+}
+
+/// Deserialize word_count as i32 or default to 0 if the value is null.
+fn deserialize_word_count<'a, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    Deserialize::deserialize(deserializer)
+        .map(|x: Option<_>| {
+            x.unwrap_or(0)
+        })
 }
 
 async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
