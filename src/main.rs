@@ -66,7 +66,8 @@ struct ReaderResult {
     summary: Option<String>,
     // TODO: import strutured tags
     tags: Option<Value>,
-    title: Option<String>,
+    #[serde(deserialize_with = "deserialize_title")]
+    title: String,
     updated_at: Option<DateTime<Local>>,
     #[serde(rename = "url")]
     readwise_url: Option<String>,
@@ -101,6 +102,17 @@ where
     Deserialize::deserialize(deserializer)
         .map(|x: Option<_>| {
             x.unwrap_or(0)
+        })
+}
+
+/// Deserialize title as String or default to "Untitled".
+fn deserialize_title<'a, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    Deserialize::deserialize(deserializer)
+        .map(|x: Option<_>| {
+            x.unwrap_or("Untitled".to_string())
         })
 }
 
@@ -230,10 +242,10 @@ async fn main() -> Result<()> {
 
         for result in response.results {
             match save(&pool, &result).await {
-                Ok(_) => debug!("{} sync", result.title.unwrap_or("Untitled".to_string())),
+                Ok(_) => debug!("{} sync", result.title),
                 Err(e) => error!(
                     "Failed to sync {}: {}",
-                    result.title.unwrap_or("Untitled".to_string()),
+                    result.title,
                     e,
                 ),
             }
