@@ -237,7 +237,7 @@ async fn main() -> Result<()> {
 
         next_page_cursor = response.next_page_cursor;
 
-        info!("{} items found", response.count);
+        info!("{} items remaining", response.count);
         info!("Saving {} items to database...", response.results.len());
 
         for result in response.results {
