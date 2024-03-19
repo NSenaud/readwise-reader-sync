@@ -18,5 +18,9 @@ sqlx = { version = "0.7.3", features = ["bigdecimal", "chrono", "json", "migrate
 tokio = { version = "1.36.0", features = ["macros"] }
 ureq = { version = "2.9.4", features = ["gzip", "json", "tls"]}
 
+[profile.dev]
+debug = 0
+panic = "abort"
+
 [profile.dev.package.sqlx-macros]
 opt-level = 3
