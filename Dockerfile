@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.76 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.77-bookworm AS chef
 WORKDIR /app
 
 
@@ -10,6 +10,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends mold
 # Build our project dependencies
 RUN cargo chef cook --release --recipe-path recipe.json
 

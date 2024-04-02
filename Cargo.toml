@@ -22,5 +22,12 @@ ureq = { version = "2.9.4", features = ["gzip", "json", "tls"]}
 debug = 0
 panic = "abort"
 
+[profile.release]
+opt-level = "z"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
 [profile.dev.package.sqlx-macros]
 opt-level = 3
