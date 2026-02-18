@@ -171,7 +171,14 @@ async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     )
     .execute(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to save '{}' (id={}): {e}", result.title, result.id))
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to save '{:?}' (id={:?}, source_url={:?}): {e}",
+            result.title,
+            result.id,
+            result.source_url
+        )
+    })
 }
 
 fn get_reading(url: &str, access_token: &str) -> Result<ureq::Response> {
