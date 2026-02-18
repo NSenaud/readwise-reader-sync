@@ -1,5 +1,5 @@
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Local, Utc};
@@ -64,7 +64,7 @@ struct ReaderResult {
     source: Option<String>,
     source_url: Option<String>,
     summary: Option<String>,
-    // TODO: import strutured tags
+    // TODO: import structured tags
     tags: Option<Value>,
     #[serde(deserialize_with = "deserialize_title")]
     title: String,
@@ -99,10 +99,7 @@ fn deserialize_word_count<'a, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'a>,
 {
-    Deserialize::deserialize(deserializer)
-        .map(|x: Option<_>| {
-            x.unwrap_or(0)
-        })
+    Deserialize::deserialize(deserializer).map(|x: Option<_>| x.unwrap_or(0))
 }
 
 /// Deserialize title as String or default to "Untitled".
@@ -110,10 +107,7 @@ fn deserialize_title<'a, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'a>,
 {
-    Deserialize::deserialize(deserializer)
-        .map(|x: Option<_>| {
-            x.unwrap_or("Untitled".to_string())
-        })
+    Deserialize::deserialize(deserializer).map(|x: Option<_>| x.unwrap_or("Untitled".to_string()))
 }
 
 async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
@@ -179,7 +173,7 @@ async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     }
 }
 
-fn get_reading(url: &String, access_token: &String) -> Option<ureq::Response> {
+fn get_reading(url: &str, access_token: &str) -> Option<ureq::Response> {
     loop {
         let (response, wait_for) = match ureq::get(url)
             .set("Authorization", &format!("Token {access_token}"))
@@ -192,8 +186,12 @@ fn get_reading(url: &String, access_token: &String) -> Option<ureq::Response> {
                     "Received code {code}, wait for {} seconds",
                     response.header("Retry-After").unwrap_or("undefined")
                 );
-                (None, str::parse(response.header("Retry-After").unwrap_or("0")).expect("Failed to parse Retry-After header"))
-            },
+                (
+                    None,
+                    str::parse(response.header("Retry-After").unwrap_or("0"))
+                        .expect("Failed to parse Retry-After header"),
+                )
+            }
             Err(e) => panic!("{}", e),
         };
 
@@ -225,7 +223,9 @@ async fn main() -> Result<()> {
             Some(v) => format!("https://readwise.io/api/v3/list/?pageCursor={}", v),
         };
 
-        let response: String = get_reading(&url, access_token).expect("Unexpected answer").into_string()?;
+        let response: String = get_reading(&url, access_token)
+            .expect("Unexpected answer")
+            .into_string()?;
 
         // Some Deserializer.
         let jd = &mut serde_json::Deserializer::from_str(&response);
@@ -243,11 +243,7 @@ async fn main() -> Result<()> {
         for result in response.results {
             match save(&pool, &result).await {
                 Ok(_) => debug!("{} sync", result.title),
-                Err(e) => error!(
-                    "Failed to sync {}: {}",
-                    result.title,
-                    e,
-                ),
+                Err(e) => error!("Failed to sync {}: {}", result.title, e,),
             }
         }
 
