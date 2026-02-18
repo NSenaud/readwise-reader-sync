@@ -23,7 +23,7 @@ CREATE TABLE history (
 
 COMMENT ON TABLE history IS 'History of auditable actions on audited tables, from if_modified_func()';
 COMMENT ON COLUMN history.event_id IS 'Unique identifier for each auditable event';
-COMMENT ON COLUMN history.table_name IS 'Non-schema-qualified table name of table event occured in';
+COMMENT ON COLUMN history.table_name IS 'Non-schema-qualified table name of table event occurred in';
 COMMENT ON COLUMN history.relid IS 'Table OID. Changes with drop/create. Get with ''tablename''::regclass';
 COMMENT ON COLUMN history.session_user_name IS 'Login / session user whose statement caused the audited event';
 COMMENT ON COLUMN history.action_tstamp_tx IS 'Transaction start timestamp for tx in which audited event occurred';
