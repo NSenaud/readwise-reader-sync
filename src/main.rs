@@ -1,48 +1,36 @@
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
-use chrono::{DateTime, Local, Utc};
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlx::postgres::{PgPool, PgQueryResult};
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "category", rename_all = "lowercase")]
 enum Category {
-    #[serde(rename = "article")]
     Article,
-    #[serde(rename = "email")]
     Email,
-    #[serde(rename = "epub")]
     Epub,
-    #[serde(rename = "highlight")]
     Highlight,
-    #[serde(rename = "note")]
     Note,
-    #[serde(rename = "pdf")]
     Pdf,
-    #[serde(rename = "rss")]
     Rss,
-    #[serde(rename = "tweet")]
     Tweet,
-    #[serde(rename = "video")]
     Video,
 }
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "location", rename_all = "lowercase")]
 enum Location {
-    #[serde(rename = "archive")]
     Archive,
-    #[serde(rename = "feed")]
     Feed,
-    #[serde(rename = "later")]
     Later,
-    #[serde(rename = "new")]
     New,
-    #[serde(rename = "shortlist")]
     Shortlist,
 }
 
@@ -51,7 +39,7 @@ struct ReaderResult {
     author: Option<String>,
     category: Category,
     content: Option<String>,
-    created_at: DateTime<Local>,
+    created_at: DateTime<Utc>,
     id: String,
     image_url: Option<String>,
     location: Option<Location>,
@@ -68,7 +56,7 @@ struct ReaderResult {
     tags: Option<Value>,
     #[serde(deserialize_with = "deserialize_title")]
     title: String,
-    updated_at: Option<DateTime<Local>>,
+    updated_at: Option<DateTime<Utc>>,
     #[serde(rename = "url")]
     readwise_url: Option<String>,
     #[serde(deserialize_with = "deserialize_word_count")]
@@ -77,21 +65,24 @@ struct ReaderResult {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ReaderResponse {
-    count: usize,
+    #[serde(rename = "count")]
+    total_remaining: usize,
     #[serde(rename = "nextPageCursor")]
     next_page_cursor: Option<String>,
     results: Vec<ReaderResult>,
 }
 
-// FIXME: deserialize timestamp or ISO3339 dates
+// FIXME: handle Unix timestamp integers and ISO 8601 strings explicitly
 fn deserialize_published_date<'a, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: Deserialize<'a> + Default,
     D: Deserializer<'a>,
 {
     let v: Value = Deserialize::deserialize(deserializer)?;
-
-    Ok(T::deserialize(v).unwrap_or_default())
+    Ok(T::deserialize(v.clone()).unwrap_or_else(|e| {
+        warn!("Failed to deserialize published_date (value: {v:?}): {e}. Defaulting to None.");
+        T::default()
+    }))
 }
 
 /// Deserialize word_count as i32 or default to 0 if the value is null.
@@ -107,12 +98,13 @@ fn deserialize_title<'a, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'a>,
 {
-    Deserialize::deserialize(deserializer).map(|x: Option<_>| x.unwrap_or("Untitled".to_string()))
+    Deserialize::deserialize(deserializer)
+        .map(|x: Option<_>| x.unwrap_or_else(|| String::from("Untitled")))
 }
 
 async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     debug!("Processing: {result:?}");
-    match sqlx::query!(
+    sqlx::query!(
         r#"
         INSERT INTO reading (
             id,
@@ -139,7 +131,22 @@ async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
             $12, $13, $14, $15, $16, $17, $18, $19, $20
         )
-        ON CONFLICT DO NOTHING
+        ON CONFLICT (id) DO UPDATE SET
+            author           = EXCLUDED.author,
+            content          = EXCLUDED.content,
+            image_url        = EXCLUDED.image_url,
+            location         = EXCLUDED.location,
+            notes            = EXCLUDED.notes,
+            published_date   = EXCLUDED.published_date,
+            reading_progress = EXCLUDED.reading_progress,
+            site_name        = EXCLUDED.site_name,
+            source           = EXCLUDED.source,
+            source_url       = EXCLUDED.source_url,
+            summary          = EXCLUDED.summary,
+            tags             = EXCLUDED.tags,
+            title            = EXCLUDED.title,
+            updated_at       = EXCLUDED.updated_at,
+            word_count       = EXCLUDED.word_count
         "#,
         result.id,
         result.author,
@@ -164,40 +171,37 @@ async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     )
     .execute(pool)
     .await
-    .map_err(|e| {
-        error!("Failed to execute query: {:?}", e);
-        e
-    }) {
-        Ok(r) => Ok(r),
-        Err(e) => bail!("Failed to save entry in database: {e}"),
-    }
+    .map_err(|e| anyhow::anyhow!("Failed to save '{}' (id={}): {e}", result.title, result.id))
 }
 
-fn get_reading(url: &str, access_token: &str) -> Option<ureq::Response> {
+fn get_reading(url: &str, access_token: &str) -> Result<ureq::Response> {
     loop {
-        let (response, wait_for) = match ureq::get(url)
+        match ureq::get(url)
             .set("Authorization", &format!("Token {access_token}"))
             .set("Content-Type", "application/json")
             .call()
         {
-            Ok(r) => (Some(r), 0),
-            Err(ureq::Error::Status(code, response)) => {
-                warn!(
-                    "Received code {code}, wait for {} seconds",
-                    response.header("Retry-After").unwrap_or("undefined")
-                );
-                (
-                    None,
-                    str::parse(response.header("Retry-After").unwrap_or("0"))
-                        .expect("Failed to parse Retry-After header"),
-                )
+            Ok(response) => return Ok(response),
+            Err(ureq::Error::Status(code, response)) if code == 429 || code >= 500 => {
+                let retry_after: u64 = response
+                    .header("Retry-After")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| {
+                        warn!(
+                            "Missing or unparsable Retry-After header for HTTP {code}. Defaulting to 60s."
+                        );
+                        60
+                    });
+                warn!("Received HTTP {code}, retrying after {retry_after}s");
+                thread::sleep(Duration::from_secs(retry_after));
             }
-            Err(e) => panic!("{}", e),
-        };
-
-        match response {
-            None => thread::sleep(Duration::from_millis((wait_for * 1000) as u64)),
-            _ => return response,
+            Err(ureq::Error::Status(code, _)) => {
+                anyhow::bail!("Non-retryable HTTP error {code} from Readwise API");
+            }
+            Err(ureq::Error::Transport(e)) => {
+                error!("Network transport error: {e}. Retrying in 30s.");
+                thread::sleep(Duration::from_secs(30));
+            }
         }
     }
 }
@@ -214,37 +218,44 @@ async fn main() -> Result<()> {
 
     let access_token = &dotenvy::var("READWISE_ACCESS_TOKEN")?;
 
-    let mut next_page_cursor = None;
+    let mut next_page_cursor: Option<String> = None;
 
     loop {
-        info!("Requisting Readwise API...");
-        let url = match next_page_cursor {
+        info!("Requesting Readwise API...");
+        let url = match &next_page_cursor {
             None => "https://readwise.io/api/v3/list/".to_string(),
-            Some(v) => format!("https://readwise.io/api/v3/list/?pageCursor={}", v),
+            Some(cursor) => format!("https://readwise.io/api/v3/list/?pageCursor={cursor}"),
         };
 
-        let response: String = get_reading(&url, access_token)
-            .expect("Unexpected answer")
-            .into_string()?;
+        let body: String = get_reading(&url, access_token)?.into_string()?;
 
-        // Some Deserializer.
-        let jd = &mut serde_json::Deserializer::from_str(&response);
+        let jd = &mut serde_json::Deserializer::from_str(&body);
 
-        let response: ReaderResponse = match serde_path_to_error::deserialize(jd) {
-            Ok(v) => v,
-            Err(err) => panic!("{} error for path {}", err, err.path()),
-        };
+        let page: ReaderResponse = serde_path_to_error::deserialize(jd).map_err(|err| {
+            error!(
+                "Failed to deserialize API response at '{}': {err}. Raw body: {body}",
+                err.path()
+            );
+            err
+        })?;
 
-        next_page_cursor = response.next_page_cursor;
+        next_page_cursor = page.next_page_cursor;
 
-        info!("{} items remaining", response.count);
-        info!("Saving {} items to database...", response.results.len());
+        info!("{} total items remaining", page.total_remaining);
+        info!("Saving {} items to database...", page.results.len());
 
-        for result in response.results {
+        let mut failures = 0usize;
+        for result in page.results {
             match save(&pool, &result).await {
-                Ok(_) => debug!("{} sync", result.title),
-                Err(e) => error!("Failed to sync {}: {}", result.title, e,),
+                Ok(_) => debug!("Synced: {}", result.title),
+                Err(e) => {
+                    error!("{e}");
+                    failures += 1;
+                }
             }
+        }
+        if failures > 0 {
+            warn!("{failures} document(s) failed to save on this page");
         }
 
         if next_page_cursor.is_none() {
