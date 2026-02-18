@@ -1,6 +1,8 @@
 #! /usr/bin/env bash
-set -x
+
 set -eo pipefail
+
+POSTGRES_IMAGE="dhi.io/postgres:18-alpine3.22-dev"
 
 if ! [ -x "$(command -v psql)" ]; then
   echo >&2 "Error: 'psql' is not installed."
@@ -21,16 +23,16 @@ DB_PASSWORD="${POSTGRES_PASSWORD:=password}"
 DB_NAME="${POSTGRES_DB:=readwise}"
 DB_PORT="${POSTGRES_PORT:=5432}"
 
-# Allow to skip Docker if a dockerized Postgres database is already running
+# Allow to skip Podman if a Postgres database is already running
 if [[ -z "${SKIP_DOCKER}" ]]; then
-    docker run \
+    podman run \
       -e POSTGRES_USER="${DB_USER}" \
       -e POSTGRES_PASSWORD="${DB_PASSWORD}" \
       -e POSTGRES_DB="${DB_NAME}" \
       -p "${DB_PORT}":5432 \
       --name 'readwise-sync-pg' \
       --replace \
-      -d "postgres:16-alpine3.19"
+      -d ${POSTGRES_IMAGE}
 fi
 
 # Keep pinging Postgres until it's ready to accept commands
