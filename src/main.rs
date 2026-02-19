@@ -198,7 +198,7 @@ fn build_url(cursor: Option<&str>, updated_after: Option<&DateTime<Utc>>) -> Str
         params.push(format!("pageCursor={c}"));
     }
     if let Some(ts) = updated_after {
-        params.push(format!("updatedAfter={}", ts.to_rfc3339()));
+        params.push(format!("updatedAfter={}", ts.format("%Y-%m-%dT%H:%M:%SZ")));
     }
 
     if params.is_empty() {
