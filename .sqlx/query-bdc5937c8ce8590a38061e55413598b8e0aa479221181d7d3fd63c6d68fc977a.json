@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO reading (\n            id,\n            author,\n            category,\n            content,\n            created_at,\n            image_url,\n            location,\n            notes,\n            parent_id,\n            published_date,\n            reading_progress,\n            readwise_url,\n            site_name,\n            source,\n            source_url,\n            summary,\n            tags,\n            title,\n            updated_at,\n            word_count\n        ) VALUES (\n            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,\n            $12, $13, $14, $15, $16, $17, $18, $19, $20\n        )\n        ON CONFLICT (id) DO UPDATE SET\n            author           = EXCLUDED.author,\n            content          = EXCLUDED.content,\n            image_url        = EXCLUDED.image_url,\n            location         = EXCLUDED.location,\n            notes            = EXCLUDED.notes,\n            published_date   = EXCLUDED.published_date,\n            reading_progress = EXCLUDED.reading_progress,\n            site_name        = EXCLUDED.site_name,\n            source           = EXCLUDED.source,\n            source_url       = EXCLUDED.source_url,\n            summary          = EXCLUDED.summary,\n            tags             = EXCLUDED.tags,\n            title            = EXCLUDED.title,\n            updated_at       = EXCLUDED.updated_at,\n            word_count       = EXCLUDED.word_count\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        {
+          "Custom": {
+            "name": "category",
+            "kind": {
+              "Enum": [
+                "article",
+                "email",
+                "epub",
+                "highlight",
+                "note",
+                "pdf",
+                "rss",
+                "tweet",
+                "video"
+              ]
+            }
+          }
+        },
+        "Text",
+        "Timestamptz",
+        "Text",
+        {
+          "Custom": {
+            "name": "location",
+            "kind": {
+              "Enum": [
+                "archive",
+                "feed",
+                "later",
+                "new",
+                "shortlist"
+              ]
+            }
+          }
+        },
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Float4",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Timestamptz",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bdc5937c8ce8590a38061e55413598b8e0aa479221181d7d3fd63c6d68fc977a"
+}
