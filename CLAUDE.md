@@ -21,8 +21,14 @@ Tool versions are managed by **mise** (`mise.toml`): PostgreSQL 18.2, prek 0.3.3
 ## Commands
 
 ```bash
-# Run locally (requires DATABASE_URL and READWISE_ACCESS_TOKEN in env)
+# One-time dev setup (installs pre-commit, commitlint, sqlx-cli, etc.)
+just dev-install
+
+# Run locally (incremental sync from last checkpoint)
 cargo run
+
+# Full sync — bypass checkpoint and re-fetch everything
+cargo run -- --full-sync
 
 # Build release binary
 cargo build --release
@@ -67,14 +73,15 @@ src/
 - A live `DATABASE_URL` at compile time, **or**
 - `SQLX_OFFLINE=true` with the `.sqlx/` directory containing cached query metadata
 
-The Dockerfile sets `SQLX_OFFLINE=true` and uses the committed `.sqlx/` cache. When modifying queries, run `cargo sqlx prepare` to regenerate the cache before committing.
+The Dockerfile and CI both set `SQLX_OFFLINE=true` and use the committed `.sqlx/` cache. When modifying queries, run `cargo sqlx prepare` to regenerate the cache before committing.
 
 ### Database schema
 
-Two tables (see `migrations/`):
+Three tables (see `migrations/`):
 
 - `reading` — one row per Readwise document, upserted on `id`
 - `sync_state` — single row (`id = 1`) storing `last_sync_at` timestamp for incremental syncs
+- `history` — audit log of all changes to `reading`, populated by a PostgreSQL trigger (added in `20240304213214_track_changes.sql`)
 
 The `reading` table uses two custom PostgreSQL ENUMs:
 
@@ -93,13 +100,29 @@ Migrations run automatically at startup via `sqlx::migrate!()`.
 6. Follow `nextPageCursor` until exhausted
 7. Write `sync_started_at` back to `sync_state`
 
+Individual document save failures are logged and counted but do **not** abort the sync — the loop continues and saves the checkpoint at the end.
+
 ### Custom deserializers (src/models.rs)
 
 Three custom serde deserializers handle Readwise API quirks:
 
-- `deserialize_published_date`: accepts Unix timestamp, ISO8601, or null (defaults to `None`)
+- `deserialize_published_date`: accepts Unix timestamp, ISO8601, or null (defaults to `None`). Has a known FIXME — it uses a generic fallback rather than explicitly handling each format.
 - `deserialize_word_count`: defaults null to `0`
 - `deserialize_title`: defaults null to `"Untitled"`
+
+Also note: `location` on `ReaderResult` is `Option<Location>` (nullable in the API), but the DB column is non-nullable — the `as _` cast in `db.rs` lets sqlx handle the mapping.
+
+The `tags` field is stored as raw `serde_json::Value` (JSONB in the DB) — structured tag import is a known TODO.
+
+### CI/CD
+
+Three GitHub Actions workflows in `.github/workflows/`:
+
+- `ci.yml` — runs on PRs to `master`: parallel `fmt`, `clippy`, `build` jobs. All set `SQLX_OFFLINE=true` and install `mold` before compiling.
+- `release.yml` — runs on push to `master`: uses `semantic-release` with `git-cliff` for changelogs and `semantic-release-cargo` to bump `Cargo.toml` version. Commits back `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` with `[skip ci]`.
+- `publish.yml` — runs on GitHub release published: builds a static `x86_64-unknown-linux-musl` binary and attaches it to the release. Uses `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-cpu=native"` to override the mold linker (incompatible with musl).
+
+Release config: `.releaserc.json`. Changelog template: `cliff.toml`.
 
 ### Pre-commit hooks
 
