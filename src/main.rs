@@ -3,10 +3,19 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use clap::Parser;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlx::postgres::{PgPool, PgQueryResult};
+
+#[derive(Parser)]
+#[command(about = "Sync Readwise Reader documents to PostgreSQL")]
+struct Args {
+    /// Bypass the checkpoint and re-sync everything from the beginning
+    #[arg(long, default_value_t = false)]
+    full_sync: bool,
+}
 
 #[derive(Debug, Deserialize, Serialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
@@ -181,6 +190,42 @@ async fn save(pool: &PgPool, result: &ReaderResult) -> Result<PgQueryResult> {
     })
 }
 
+fn build_url(cursor: Option<&str>, updated_after: Option<&DateTime<Utc>>) -> String {
+    let base = "https://readwise.io/api/v3/list/";
+    let mut params: Vec<String> = Vec::new();
+
+    if let Some(c) = cursor {
+        params.push(format!("pageCursor={c}"));
+    }
+    if let Some(ts) = updated_after {
+        params.push(format!("updatedAfter={}", ts.to_rfc3339()));
+    }
+
+    if params.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}?{}", base, params.join("&"))
+    }
+}
+
+async fn load_checkpoint(pool: &PgPool) -> Result<Option<DateTime<Utc>>> {
+    let row = sqlx::query!("SELECT last_sync_at FROM sync_state WHERE id = 1")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.last_sync_at)
+}
+
+async fn save_checkpoint(pool: &PgPool, ts: &DateTime<Utc>) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO sync_state (id, last_sync_at) VALUES (1, $1)
+         ON CONFLICT (id) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at",
+        ts
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 fn get_reading(url: &str, access_token: &str) -> Result<ureq::Response> {
     loop {
         match ureq::get(url)
@@ -217,6 +262,8 @@ fn get_reading(url: &str, access_token: &str) -> Result<ureq::Response> {
 async fn main() -> Result<()> {
     env_logger::init();
 
+    let args = Args::parse();
+
     info!("Connecting to database...");
     let pool = PgPool::connect(&dotenvy::var("DATABASE_URL")?).await?;
 
@@ -225,14 +272,31 @@ async fn main() -> Result<()> {
 
     let access_token = &dotenvy::var("READWISE_ACCESS_TOKEN")?;
 
+    let updated_after: Option<DateTime<Utc>> = if args.full_sync {
+        info!("Full sync requested — ignoring checkpoint.");
+        None
+    } else {
+        match load_checkpoint(&pool).await? {
+            Some(ts) => {
+                info!("Resuming from checkpoint: {ts}");
+                Some(ts)
+            }
+            None => {
+                info!("No checkpoint found — performing full sync.");
+                None
+            }
+        }
+    };
+
+    // Record start time before the sync so we don't miss documents
+    // updated while the sync is in progress.
+    let sync_started_at = Utc::now();
+
     let mut next_page_cursor: Option<String> = None;
 
     loop {
         info!("Requesting Readwise API...");
-        let url = match &next_page_cursor {
-            None => "https://readwise.io/api/v3/list/".to_string(),
-            Some(cursor) => format!("https://readwise.io/api/v3/list/?pageCursor={cursor}"),
-        };
+        let url = build_url(next_page_cursor.as_deref(), updated_after.as_ref());
 
         let body: String = get_reading(&url, access_token)?.into_string()?;
 
@@ -269,6 +333,9 @@ async fn main() -> Result<()> {
             break;
         }
     }
+
+    save_checkpoint(&pool, &sync_started_at).await?;
+    info!("Checkpoint saved: {sync_started_at}");
 
     Ok(())
 }
