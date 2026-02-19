@@ -21,6 +21,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
 
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
       - name: Install cargo-edit
         uses: taiki-e/install-action@1cf3de8de323df92fe08c793e53eaef58799aec4 # v2
         with:
