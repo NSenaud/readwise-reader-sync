@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use log::warn;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -67,17 +67,46 @@ pub struct ReaderResponse {
     pub results: Vec<ReaderResult>,
 }
 
-// FIXME: handle Unix timestamp integers and ISO 8601 strings explicitly
-pub fn deserialize_published_date<'a, T, D>(deserializer: D) -> Result<T, D::Error>
+/// Deserialize `published_date` from the Readwise API.
+///
+/// The API returns one of:
+/// - `null` → `None`
+/// - A Unix timestamp integer (seconds) → converted to `DateTime<Utc>`
+/// - A full ISO 8601 / RFC 3339 datetime string → parsed directly
+/// - A date-only string like `"2026-01-30"` → treated as midnight UTC
+pub fn deserialize_published_date<'de, D>(
+    deserializer: D,
+) -> Result<Option<DateTime<Utc>>, D::Error>
 where
-    T: Deserialize<'a> + Default,
-    D: Deserializer<'a>,
+    D: Deserializer<'de>,
 {
     let v: Value = Deserialize::deserialize(deserializer)?;
-    Ok(T::deserialize(v.clone()).unwrap_or_else(|e| {
-        warn!("Failed to deserialize published_date (value: {v:?}): {e}. Defaulting to None.");
-        T::default()
-    }))
+    match &v {
+        Value::Null => Ok(None),
+        Value::Number(n) => {
+            let ts = n.as_i64().ok_or_else(|| {
+                serde::de::Error::custom(format!("invalid timestamp number: {n}"))
+            })?;
+            DateTime::from_timestamp(ts, 0)
+                .map(Some)
+                .ok_or_else(|| serde::de::Error::custom(format!("timestamp out of range: {ts}")))
+        }
+        Value::String(s) => {
+            // Try full datetime first, then fall back to date-only (midnight UTC).
+            if let Ok(dt) = s.parse::<DateTime<Utc>>() {
+                return Ok(Some(dt));
+            }
+            if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                return Ok(Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc()));
+            }
+            warn!("Failed to parse published_date string {s:?}. Defaulting to None.");
+            Ok(None)
+        }
+        other => {
+            warn!("Unexpected published_date value: {other:?}. Defaulting to None.");
+            Ok(None)
+        }
+    }
 }
 
 /// Deserialize word_count as i32 or default to 0 if the value is null.
