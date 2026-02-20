@@ -4,11 +4,12 @@ on:
   pull_request:
     branches: [master]
     paths:
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "migrations/**"
+      - ".github/workflows/ci.yml"
       - ".sqlx/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "migrations/**"
+      - "src/**"
 
 permissions:
   contents: read
