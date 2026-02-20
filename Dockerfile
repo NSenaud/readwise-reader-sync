@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.77-bookworm AS chef
+FROM docker.io/lukemathwalker/cargo-chef:latest-rust-1.93.1-slim-trixie AS chef
 WORKDIR /app
 
 
@@ -20,7 +20,7 @@ ENV SQLX_OFFLINE true
 RUN cargo build --release --bin reader-sync
 
 
-FROM debian:bookworm-slim AS runtime
+FROM docker.io/debian:trixie-slim AS runtime
 WORKDIR /app
 
 ENV APP_ENVIRONMENT production
