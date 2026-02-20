@@ -3,7 +3,7 @@ name = "reader-sync"
 description = "Sync Readwise Reader documents into a PostgreSQL database"
 edition = "2024"
 license = "MIT"
-version = "0.3.3"
+version = "0.3.4"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
