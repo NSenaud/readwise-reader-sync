@@ -26,12 +26,12 @@ jobs:
         run: sudo apt-get install -y mold
 
       - name: Install cargo-edit
-        uses: taiki-e/install-action@71b48393496777ee11188c07a34d48b048a985cd # v2.68.5
+        uses: taiki-e/install-action@a888d8f01506d4d9870e4a94d8b2ff13cc956c2e # v2.68.29
         with:
           tool: cargo-edit
 
       - name: Install git-cliff
-        uses: taiki-e/install-action@71b48393496777ee11188c07a34d48b048a985cd # v2.68.5
+        uses: taiki-e/install-action@a888d8f01506d4d9870e4a94d8b2ff13cc956c2e # v2.68.29
         with:
           tool: git-cliff
 
