@@ -1,4 +1,4 @@
 [tools]
 postgres = "18.2"
-prek = "0.3.3"
+prek = "0.5.2"
 zizmor = "1.22.0"
